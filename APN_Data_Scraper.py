@@ -4,7 +4,7 @@ Created on Sat Aug 26 13:49:10 2017
 
 @author: raleigh-littles
 """
-import requests, time
+import requests, time, re, csv
 t0 = time.time()
 
 def get_apn_list():
@@ -25,10 +25,7 @@ def get_apn_list():
 'Upgrade-Insecure-Requests':'1',
 'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.113 Safari/537.36'}
 
-
-
     response_array = []
-    # Multiple requests
     
     for i in range(0, 10):
         search_url = "APN=" + str(i) + "&HN=&SN=&UN=&SB=SB_APN"
@@ -51,11 +48,8 @@ def get_apn_list():
         else:
             print("Website down -- try again later.")
 
-    
-
-
     '''
-    # test single request?
+    # Test a single request
     testing_url = 'http://sbcassessor.com/assessor/Results.aspx?APN=07506200&HN=&SN=&UN=&SB=SB_APN'
     payload = {'APN': '07506200', 'HN': '', 'SN': '', 'UN': '', 'SB': 'SB_APN'}
 
@@ -68,121 +62,139 @@ def get_apn_list():
     return response_array
 
     
-
-
 def parse_apn_response(file):
-    ''' Returns an array of APNs found in the full HTML passed into it '''
-    t0 = time.time()
-    print('Parsing APNs from file:', file)
+    """ Returns an array of APNs found in the full HTML contained in the file that was passed to it. """
+    
+    # Really need to work on your regex here. 
+    regex_string = 'apn=\d\d\d\d\d\d\d\d\d'
+    apns_from_file = []
+    with open(file, 'r') as input_file:
+        text_to_parse = input_file.read()
+        print ("Input file read")
+        
+    # Use regex to parse the APNs and write them to an array
+    apn_matches = re.findall(regex_string, text_to_parse)
+    print ("Matches found for regex:", len(apn_matches))
+        
+    # Remove everything before the = sign so its just a nice list of APNs
+    for match in apn_matches:
+        apns_from_file.append( match.split('=')[1] )
+    
+    return apns_from_file
+    
 
-    apn_array = []
-                      
-    search_string = "<a href='details.aspx?apn="
-    #response_array = []
-    #for i in range(0, len(file_list)):
-    '''
-    for file in file_list:
-        #file = file_list[i]
-        f = open(file)
-        response_array.append(f.read())
-    '''
+def get_details_for_apn(apn):
+    """
+    Takes an APN, returns the data for it in a comma separated string consisting of:
+    APN, Address, City, State, ZIP code, Transfer Date, TRA, Document #, Transfer Tax Amount, Use Description,
+    Jurisdiction, Acreage, Square Feet, Year Built, Bedrooms, Bathrooms, Fireplaces,
+    Land & Mineral Rights, Improvements, Personal Property, Home Owner Exemption, Other Exemption,
+    Net Assessed Value
+     """
+    time.sleep(0.8) # Since the server keeps timing out... 
+    headers = ['APN', ' Address', ' City', ' State', ' ZIP code', ' Transfer Date', ' TRA', ' Document #', ' Transfer Tax Amount', ' Use Description', ' Jurisdiction', ' Acreage', ' Square Feet', ' Year Built', ' Bedrooms', ' Bathrooms', ' Fireplaces', ' Land & Mineral Rights', ' Improvements', ' Personal Property', ' Home Owner Exemption', ' Other Exemption', ' Net Assessed Value'] 
+    if ( int(apn) == 0 ): # use this to return the column headings
+        return headers
 
-    response_file = open(file)
-    response = response_file.read()
+    ## Given an APN, make a request to the server to get its details
+    main_url = 'http://www.sbcvote.com/assessor/details.aspx?apn='
+    response = requests.get(main_url + apn)
+    values = []
+    search_tags = ['LblAPN', 'LblAddress', 'LblCity', 'LblTransferDate', 'LblTRA', 'LblDocNum', 'LblStampAmt', 'LblUseCode',
+                   'LblJurisdiction', 'LblAcreage', 'LblSqrFt', 'LblYearBuilt', 'LblBedrooms', 'LblBathrooms', 'LblFireplaces',
+                   'LblLand', 'LblImprove', 'LblPersonal', 'LblHomeOwnerExem', 'LblOtherExem', 'LblNetVal']
 
-    #for response in response_array:
-    '''
-    for i in range(0, len(response_array)):
-        t0 = time.time()
-        #current_apn_array = []
-        response = response_array[i]
-        print("Currently parsing from the ", i, "-th file")
-        while (response.find(search_string) != -1):
-            starting_index = response.find(search_string)
-            #print("Starting index: ", starting_index)
-            apn = response[starting_index + len(search_string): starting_index + len(search_string) + 9]
-            #print("apn found: ", apn)
-            full_apn_array.append(apn)
 
-            response = response[starting_index + len(search_string) + 10:] # Trim the beginning of 'response'
+    reply = response.text
+    for search_string in search_tags:
+        # Once the seach tag is found, go to the end of it (after the closing quote), and grab everything until the '</span',
+        # thats the value we need!
+        starting_index = reply.find(search_string) + len(search_string) + 1 # to accont for the extra quote
+        value = reply[starting_index: starting_index + 50] # get the next 50 characters, no input will ever be longer than this
+        ending_index = value.find('</span>')
+        value = value[1:ending_index] # to account for the closing '>' on the span
+        
+        if (value == ' '): # replace missing spaces with N/A
+            value = 'N/A'
+        
+         # Special case to filter out some unicode
+        if (value == '/xa0'):
+            value = ' '
+        
+       # print("The value found for the tag", search_string, "is: ", value)
+        
+        if (search_string == 'LblCity'): # Parse manually to remove city, state, zip
+            city =  value.split(',')[0] 
+            state = (value.split(',')[1]).split()[0] # Get stuff to the right of the comma but to the left on the space
 
-        print("Finished parsing APNs from one file. Time elapsed:", str(time.time() - t0), "seconds.")
-    '''
-
-    while ( response.find(search_string) != -1):
-        starting_index = response.find(search_string)
-        apn = response[starting_index + len(search_string): starting_index + len(search_string) + 9]
-        apn_array.append(apn)
-
-        response = response[starting_index + len(search_string) + 10:] # Trim the beginning of 'response'
+            # the far right element in the space-broken string is always going to be the zip code
+            # Maybe even index this to save some time
+            zip_code = value.split(' ')[-1] 
+            values.append(city)
+            values.append(state)
+            values.append(zip_code)
             
-    '''
-    #print(full_apn_set)
-    print("Finished parsing APNs from 10 files.")
+        else:
+            values.append(value)
+    
+            
+    if (len(values) != len(headers)):
+        print ("It looks like an error occured in parsing your data, since your headers have:", len(headers), \
+               "elements, but your data only passed in", len(values), " variables.")
+        
+        for i in range(0, 24): # There are 23 headers
+            try:
+                print( headers[i], " <--> ", values[i])
+                
+            except:
+                pass
+    return values
+
+
+def main():
+    file_list = []
+    for i in range(0, 10):
+        file_name = "APN Data - " + str(i) + ".txt"
+        file_list.append(file_name)
+    
+    full_apn_array = []
+    for file in file_list:
+        #full_apn_array.append( parse_apn_response(file) )
+        apns_in_file = parse_apn_response(file)
+        for apn in apns_in_file:
+            full_apn_array.append(apn)
+        with open(file + "_parsed.txt", 'w') as parsed_file:
+            parsed_file.write(str(apns_in_file))
+            print("APNs saved to file.")
+    
+    print ("Before removing duplicates, there are ", len(full_apn_array), "APNs.")
     full_apn_set = set(full_apn_array)
-    with open("Full APN List.txt", 'w') as apn_file_list:
-        full_apn_set_string = ', '.join(str(s) for s in full_apn_set)
-        apn_file_list.write(full_apn_set_string)
-    '''
+    print ("After removing duplicates, there are", len(full_apn_set), "APNs.")
+    full_apn_string = ', '.join(full_apn_set)
+    
+    with open("Full-APN-list.txt", 'w') as apn_file_list:
+        apn_file_list.write(full_apn_string)
+    
+    # Contains a string of strings holding in 
+    #apn_details = []
+    
+    with open('Property_Data.csv', 'w') as my_csv_file:
+        csv_writer = csv.writer(my_csv_file, delimiter =',')
+        # Write headers to csv file first
+        header_data = get_details_for_apn('0')
+        csv_writer.writerow(header_data)
+        for apn in full_apn_set:
+            print ("Currently parsing APN:", apn)
+            row_data = get_details_for_apn(apn)
+            csv_writer.writerow(row_data)
+            
+            
+main()
 
-    t1 = time.time()
-    print("Finished parsing APNs from file. Time elapsed:", str(round(t1-t0, 3)), 'seconds')
-    return apn_array
+t1 = time.time()
 
-
-    def get_details_for_apn(apn):
-        """
-        Takes an APN, returns the data for it in a comma separated string consisting of:
-        APN, Address, City, State, ZIP code, Transfer Date, TRA, Document #, Transfer Tax Amount, Use Description,
-        Jurisdiction, Acreage, Square Feet, Year Built, Bedrooms, Bathrooms, Fireplaces,
-        Land & Mineral Rights, Improvements, Personal Property, Home Owner Exemption, Other Exemption,
-        Net Assessed Value
-         """
-
-        ## Given an APN, make a request to the server to get its details
-        main_url = 'http://www.sbcvote.com/assessor/details.aspx?apn='
-        response = requests.get(main_url + apn)
-        values = []
-        search_tags = ['LblAPN', 'LblAddress', 'LblCity', 'LblTransferDate', 'LblTRA', 'LblDocNum', 'LblStampAmt', 'LblUseCode',
-                       'LblJurisdiction', 'LblAcreage', 'LblSqrFt', 'LblYearBuilt', 'LblBedrooms', 'LblBathrooms', 'LblFireplaces',
-                       'LblLand', 'LblImprove', 'LblPersonal', 'LblHomeOwnerExem', 'LblOtherExem']
-
-        for search_string in search_tags:
-            # Once the seach tag is found, go to the end of it (after the closing quote), and grab everything until the '</span',
-            # thats the value we need!
-            starting_index = response.find(search_string) + len(search_string) + 1 # to accont for the extra quote
-            value = response[starting_index: starting_index + 15] # get the next 15 characters, no input will ever be longer than this
-            ending_index = value.find('</span>')
-            value = value[:ending_index]
-            print("The value found for the tag", search_string, "is: ", value)
-            values.append(value) 
-
-        # Now write the data to CSV format?
-
-
-
-file_list = []
-for i in range(0, 10):
-    file_name = "APN Data - " + str(i) + ".txt"
-    file_list.append(file_name)
-
-full_apn_array = []
-for file in file_list:
-    #full_apn_array.append( parse_apn_response(file) )
-    apns_in_file = parse_apn_response(file)
-    for apn in apns_in_file:
-        full_apn_array.append(apn)
-    with open(file + "_parsed.txt", 'w') as parsed_file:
-        parsed_file.write(str(apns_in_file))
-        print("APNs saved to file:", str(parsed_file))
-
-full_apn_set = set(full_apn_array)
-full_apn_string = ', '.join(full_apn_set)
-
-with open("Full-APN-list.txt", 'w') as apn_file_list:
-    apn_file_list.write(full_apn_string)
-
-
+print("TIME ELAPSED -- ", str(round(t1-t0, 3)))
+        
 
 
 
