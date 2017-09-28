@@ -16,8 +16,8 @@ The map section is a work in progress and there is more to come.
 
 # Layout
 
-* The **output** data is the CSV file in the Results folder. It has 23 columns and 130,952 rows.
+* The **output** data is the CSV file in the Results folder. It has 23 columns and 261903 rows (there is an empty line after each row.)
 
-* The parcel **maps** are stored in the Results folder. There is 3,606 map files (in PDF).
+* The parcel **maps** are stored in the Maps folder. There is 3,606 map files (in PDF).
 
 Since I was making large HTTP requests to the server (~300 MB+) I found it easier to cache the responses based on which number was searched (0 through 9). The *parsed* versions are found in the Data folder (the raw responses exceed Github's 100 MB size limit).
