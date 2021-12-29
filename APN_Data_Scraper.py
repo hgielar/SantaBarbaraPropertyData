@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import bs4
 import requests
 import time
 import re
@@ -8,11 +9,13 @@ import os
 import typing
 import random
 import pandas
+import operator
+import functools
 
 import pdb
 t0 = time.time()
 
-main_base_url = "http://sbcassessor.com/assessor/"
+main_base_url = "https://sbcassessor.com/assessor/"
 
 def get_apn_results_per_digit():
     apn_results_search_url = main_base_url + "Results.aspx?"
@@ -28,17 +31,20 @@ def get_apn_results_per_digit():
 'Cookie':'style=null',
 'DNT':'1',
 'Host':'sbcassessor.com',
-'Referer':'http://sbcassessor.com/assessor/AssessorParcelMap.aspx?ER=NoResults',
+'Referer':'https://sbcassessor.com/assessor/AssessorParcelMap.aspx?ER=NoResults',
 'Upgrade-Insecure-Requests':'1',
 'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.113 Safari/537.36'}
 
     response_array = []
     
-    for i in range(0, 1): # Change to 1 for debugging only
+    for i in range(0, 10): # Change to 1 for debugging only
         while True: 
             search_url = "APN=" + str(i) + "&HN=&SN=&UN=&SB=SB_APN"
 
-            response = requests.get(apn_results_search_url + search_url, verify=True) # needed for HTTPs
+            response = requests.get(apn_results_search_url + search_url, verify=False) # needed for HTTPs
+
+            # Sleep even in case of success so that you don't get hit with the max retry error
+            time.sleep(random.randint(1, 10))
             
             # The website seems to always (?) respond with HTTP 200, even if it couldn't query data,
             # so you can't always assume that valid server response code equals meaningful response...
@@ -54,7 +60,6 @@ def get_apn_results_per_digit():
             else:
                 print(f"Query for website failed (HTTP {response.status_code} )")
                 # Take a quick nap
-                time.sleep(random.randint(0, 5))
 
     '''
     # Test a single request
@@ -74,8 +79,6 @@ def parse_apn_response(raw_apn_results):
     # APNs don't have a strict format required, but they're all usually at least 3 digits
     apn_regex = "apn=([\d]{3,})"
 
-    pdb.set_trace()
-
     apn_list = re.findall(apn_regex, raw_apn_results)
     print ("Matches found for regex:", len(apn_list))
     
@@ -90,62 +93,70 @@ def get_details_for_apn(apn):
     Land & Mineral Rights, Improvements, Personal Property, Home Owner Exemption, Other Exemption,
     Net Assessed Value
      """
-    time.sleep(0.8) # Since the server keeps timing out... 
+
     headers = ['APN', ' Address', ' City', ' State', ' ZIP code', ' Transfer Date', ' TRA', ' Document #', ' Transfer Tax Amount', ' Use Description', ' Jurisdiction', ' Acreage', ' Square Feet', ' Year Built', ' Bedrooms', ' Bathrooms', ' Fireplaces', ' Land & Mineral Rights', ' Improvements', ' Personal Property', ' Home Owner Exemption', ' Other Exemption', ' Net Assessed Value'] 
-    if ( int(apn) == 0 ): # use this to return the column headings
+
+    if ( apn == 0 ): # use this to return the column headings
         return headers
+
+    # The return value array. Will match length with the 'headers' (above)
+    details_list = []
 
     ## Given an APN, make a request to the server to get its details
     apn_detail_url = main_base_url + "details.aspx?apn="
-    response = requests.get(apn_detail_url + apn)
-    values = []
+    response = requests.get(apn_detail_url + apn, verify=False)
+
+    # Sleep after query, to avoid overloading server
+    time.sleep(random.randint(1, 5))
+    
+    html_parser = bs4.BeautifulSoup(response.text, 'html.parser')
+
     search_tags = ['LblAPN', 'LblAddress', 'LblCity', 'LblTransferDate', 'LblTRA', 'LblDocNum', 'LblStampAmt', 'LblUseCode',
                    'LblJurisdiction', 'LblAcreage', 'LblSqrFt', 'LblYearBuilt', 'LblBedrooms', 'LblBathrooms', 'LblFireplaces',
                    'LblLand', 'LblImprove', 'LblPersonal', 'LblHomeOwnerExem', 'LblOtherExem', 'LblNetVal']
 
+    for property_tag in search_tags:
+        parser_result = html_parser.find("span", id=property_tag)
 
-    reply = response.text
+        if parser_result is not None:
+            value_for_tag = parser_result.text
 
-    for search_string in search_tags:
-        # Once the search tag is found, go to the end of it (after the closing quote), and grab everything until the '</span',
-        # thats the value we need!
-
-        pdb.set_trace()
-
-        starting_index = reply.find(search_string) + len(search_string) + 1 # to accont for the extra quote
-        value = reply[starting_index: starting_index + 50] # get the next 50 characters, no input will ever be longer than this
-        ending_index = value.find('</span>')
-        value = value[1:ending_index] # to account for the closing '>' on the span
-        
-        if (value == ' '): # replace missing spaces with N/A
-            value = 'N/A'
-        
-         # Special case to filter out some unicode
-        if (value == '/xa0'):
-            value = ' '
-        
-       # print("The value found for the tag", search_string, "is: ", value)
-        
-        if (search_string == 'LblCity'): # Parse manually to remove city, state, zip
-            city =  value.split(',')[0] 
-            state = (value.split(',')[1]).split()[0] # Get stuff to the right of the comma but to the left on the space
-
-            # the far right element in the space-broken string is always going to be the zip code
-            # Maybe even index this to save some time
-            zip_code = value.split(' ')[-1] 
-            values.append(city)
-            values.append(state)
-            values.append(zip_code)
-            
         else:
-            values.append(value)
-    
+            # For some reason, that tag isn't present at all for the given APN
+            # Not sure why this happens, likely just missing data.
+            details_list.append("")
+            continue
+
+        if (property_tag == "LblAPN"):
+            # Strip any dashes from the APN to get just an integer
+            details_list.append(int(value_for_tag.replace("-", "")))
             
-    if (len(values) != len(headers)):
-        print ("It looks like an error occurred in parsing your data, since your headers have:", len(headers), \
-               "elements, but your data only passed in", len(values), " variables.")
+       # Confusingly, the 'City' field *sometimes* also contains the state and zip code, so strip these elements out
+       # The 'City' field looks like: "LOS ANGELES, CA 11111"
+        elif (property_tag == 'LblCity'):
+            # City names don't have commas in them
+            city = value_for_tag.split(",")[0]
+
+            # Last 5 digits are zip code, but sometimes the zip code isn't included
+            # (as some properties can span multiple zip codes)
+            zip_code = value_for_tag[-5:]
+            if not zip_code.isdigit():
+                zip_code = ""
+
+            # cheating a little bit here... (TODO)
+            state = 'CA'
+
+            # Order must match the headers list!
+            details_list.extend([city, state, zip_code])
+
+        else:
+            details_list.append(value_for_tag)
+
+    if (len(details_list) != len(headers)):
+        print(f"Incorrect number of data! Expected {len(headers)}, received {len(details_list)}")
+        return []
         
-    return values
+    return details_list
 
 if __name__ == "__main__":
 
@@ -160,28 +171,43 @@ if __name__ == "__main__":
 
     for apn_list_starting_with_digit in raw_apn_lists_results:
         apns_starting_with_common_digit = parse_apn_response(apn_list_starting_with_digit)
-        full_apn_array.append([apn for apn in apns_starting_with_common_digit])
+        #full_apn_array.append([apn for apn in apns_starting_with_common_digit])
+        full_apn_array.append(apns_starting_with_common_digit)
+
+    # You have a list of lists, now flatten it
+    full_apn_array = functools.reduce(operator.concat, full_apn_array)
     
-    apn_dataframe = pandas.DataFrame(data=[], columns=get_details_for_apn(0))
+    apn_dataframe = pandas.DataFrame(columns=get_details_for_apn(0))
 
-    pdb.set_trace()
-
+    # Build up the apn dataframe one row at a time
     for apn in full_apn_array:
-        print ("Currently parsing APN:", apn)
         row_data = get_details_for_apn(apn)
-        apn_dataframe.append(row_data)
+        if len(row_data) != 0:
+            apn_dataframe.loc[len(apn_dataframe)] = row_data
 
-    # At this point, all APN data has been populated. Move on to getting map/survey info.
+    # At this point, all APN data has been populated. Move on to getting map/survey info
     map_survey_dataframe = pandas.read_csv("Parcel_Map_Index.csv")
 
-    # Join map/survey DF with APN dataframe on the APN key
+    # If there's no APN, you won't be able to get address info, so don't even bother downloading the map for it later
+    map_survey_dataframe = map_survey_dataframe.dropna(subset=['APN'])
 
-    apn_dataframe.join(map_survey_dataframe, on='APN')
+
+    # Strip hyphens from APN column! Needed for join later
+    map_survey_dataframe["APN"] = map_survey_dataframe["APN"].apply(lambda x: x.replace("-", ""))
+
+    # Join map/survey dataframe with APN dataframe on the APN key
+
+    combined_dataframe = pandas.merge(apn_dataframe, map_survey_dataframe, on="APN")
+
+    # Write the full dataframe out to a file
+    combined_dataframe.to_csv("Full-APN-Dataframe.csv", encoding='utf-8')
 
     # Lastly, go through the map URLs for each database and download them
-    for row in apn_dataframe.iterrows():
+    for index, row in combined_dataframe.iterrows():
         map_url = row['Url']
         address_parsed = re.sub(r'\W+', '', row['Address'])
         map_file_path = os.path.join("maps", address_parsed + ".pdf")
         with open(map_file_path, 'wb') as map_pdf_file:
+            # Again, sleep so that you're not just repeatedly spamming the server
+            time.sleep(random.randint(5,10))
             map_pdf_file.write(requests.get(map_url).content)
