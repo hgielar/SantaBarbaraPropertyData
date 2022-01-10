@@ -1,19 +1,16 @@
 # -*- coding: utf-8 -*-
 
 import bs4
+import functools
+import operator
+import os
+import pandas
+import random
+import re
 import requests
 import time
-import re
-import csv
-import os
 import typing
-import random
-import pandas
-import operator
-import functools
 
-import pdb
-t0 = time.time()
 
 main_base_url = "https://sbcassessor.com/assessor/"
 
@@ -61,16 +58,7 @@ def get_apn_results_per_digit():
                 print(f"Query for website failed (HTTP {response.status_code} )")
                 # Take a quick nap
 
-    '''
-    # Test a single request
-    testing_url = 'http://sbcassessor.com/assessor/Results.aspx?APN=07506200&HN=&SN=&UN=&SB=SB_APN'
-    payload = {'APN': '07506200', 'HN': '', 'SN': '', 'UN': '', 'SB': 'SB_APN'}
 
-    response = requests.get(testing_url)
-
-    reply = response.text
-    print(reply)
-    '''
     return response_array
 
     
